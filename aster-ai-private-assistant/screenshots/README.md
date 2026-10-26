@@ -1,0 +1,1 @@
+Add your own screenshots after running the app. Avoid screenshots containing private information.

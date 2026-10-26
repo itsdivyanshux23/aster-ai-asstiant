@@ -1,0 +1,1 @@
+Put your own non-sensitive PDF or TXT notes here for local testing. Uploaded files are indexed in the current app session and are not automatically committed to Git. Do not commit private documents.
