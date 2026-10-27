@@ -1,5 +1,5 @@
 import streamlit as st
-from src.assistant import answer_question, list_models
+from src.assistant import stream_answer, list_models
 from src.database import init_db, save_message, load_messages, clear_messages
 from src.documents import extract_text, split_text, search_chunks
 
@@ -79,20 +79,22 @@ if prompt:
     retrieved = search_chunks(prompt, chunks, top_k=4) if chunks else []
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            result = answer_question(
-                question=prompt,
-                context_chunks=retrieved,
-                history=st.session_state.chat_messages[-8:],
-                model=selected_model,
-            )
-        st.markdown(result["answer"])
-        if result.get("sources"):
-            with st.expander("Sources used"):
-                for source in result["sources"]:
-                    st.markdown(f"- **{source['source']}**, section {source['chunk']}: {source['preview']}")
-        if result.get("error"):
-            st.warning(result["error"])
+        stream = stream_answer(
+            question=prompt,
+            context_chunks=retrieved,
+            history=st.session_state.chat_messages[-8:],
+            model=selected_model,
+        )
+        full_response = st.write_stream(stream)
 
-    st.session_state.chat_messages.append({"role": "assistant", "content": result["answer"]})
-    save_message("assistant", result["answer"])
+        if retrieved:
+            with st.expander("Sources used"):
+                for source in retrieved:
+                    preview = source["text"][:220].replace("\n", " ")
+                    if len(source["text"]) > 220:
+                        preview += "…"
+                    st.markdown(f"- **{source['source']}**, section {source['chunk']}: {preview}")
+
+    st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
+    save_message("assistant", full_response)
+    
