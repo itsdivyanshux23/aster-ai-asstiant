@@ -5,13 +5,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-FALLBACK_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.8-pro",
-    "gemini-3.8-flash-lite",
-]
-
-MODEL = FALLBACK_MODELS[0]
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 def check_ollama(base_url=None):
@@ -21,8 +15,27 @@ def check_ollama(base_url=None):
     return False, "Add GEMINI_API_KEY in Streamlit Secrets."
 
 
+@st.cache_data(ttl=3600)
 def list_models(base_url=None):
-    return FALLBACK_MODELS
+    """Dynamically fetch valid generateContent models, fallback to default."""
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return [DEFAULT_MODEL]
+
+    try:
+        client = genai.Client(api_key=api_key)
+        valid_models = []
+        for m in client.models.list():
+            methods = getattr(m, "supported_generation_methods", []) or getattr(m, "supported_actions", [])
+            name = m.name.replace("models/", "") if hasattr(m, "name") else ""
+            if "generateContent" in methods and "flash" in name.lower():
+                valid_models.append(name)
+        if DEFAULT_MODEL in valid_models:
+            valid_models.remove(DEFAULT_MODEL)
+            valid_models.insert(0, DEFAULT_MODEL)
+        return valid_models if valid_models else [DEFAULT_MODEL]
+    except Exception:
+        return [DEFAULT_MODEL]
 
 
 def answer_question(
@@ -30,7 +43,7 @@ def answer_question(
     context_chunks=None,
     history=None,
     base_url=None,
-    model=MODEL,
+    model=DEFAULT_MODEL,
 ):
     context_chunks = context_chunks or []
     history = history or []
@@ -60,9 +73,7 @@ def answer_question(
             "preview": preview_text,
         })
 
-        formatted_context_list.append(
-            "\n" + chunk_text
-        )
+        formatted_context_list.append("\n" + chunk_text)
 
     context = "\n\n".join(formatted_context_list)
 
@@ -101,6 +112,7 @@ def answer_question(
 
     client = genai.Client(api_key=api_key)
 
+    # Retry loop with backoff for occasional 503 high-demand spikes
     max_retries = 3
     delay = 1.5
 
@@ -126,7 +138,7 @@ def answer_question(
                 delay *= 2
                 continue
             return {
-                "answer": "Google's servers are currently busy with high demand. Please wait a few seconds and try again.",
+                "answer": "Google's servers are experiencing temporary high demand. Please try sending your prompt again.",
                 "sources": sources,
                 "error": exc.message if hasattr(exc, "message") else str(exc),
             }
@@ -138,7 +150,7 @@ def answer_question(
             }
 
     return {
-        "answer": "Server is temporarily busy. Please ask again shortly.",
+        "answer": "Google's servers are currently busy. Please wait a moment and try again.",
         "sources": sources,
         "error": "Max retries exceeded on 503.",
     }
