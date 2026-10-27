@@ -1,11 +1,18 @@
 import os
-import time
 import streamlit as st
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
 
 DEFAULT_MODEL = "gemini-flash-latest"
+
+
+@st.cache_resource
+def get_genai_client():
+    """Cache the client connection so we don't recreate it on every message."""
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    return genai.Client(api_key=api_key)
 
 
 def check_ollama(base_url=None):
@@ -18,14 +25,12 @@ def check_ollama(base_url=None):
 @st.cache_data(ttl=3600)
 def list_models(base_url=None):
     """Dynamically fetch valid text generation models only."""
-    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    client = get_genai_client()
+    if not client:
         return ["gemini-flash-latest", "gemini-3.8-flash"]
 
     try:
-        client = genai.Client(api_key=api_key)
         valid_models = []
-        # Filter out non-text, media-generation, and deprecated model tags
         exclude_tags = ["tts", "image", "embedding", "audio", "realtime", "2.0", "2.5"]
 
         for m in client.models.list():
@@ -35,7 +40,6 @@ def list_models(base_url=None):
             if "generateContent" in methods and not any(tag in name.lower() for tag in exclude_tags):
                 valid_models.append(name)
 
-        # Ensure our most reliable production models sit at the top of the dropdown
         for priority in ["gemini-flash-latest", "gemini-3.8-flash"]:
             if priority in valid_models:
                 valid_models.remove(priority)
@@ -46,41 +50,24 @@ def list_models(base_url=None):
         return ["gemini-flash-latest", "gemini-3.8-flash"]
 
 
-def answer_question(
+def stream_answer(
     question,
     context_chunks=None,
     history=None,
-    base_url=None,
     model=DEFAULT_MODEL,
 ):
+    """Generator that yields text chunks in real time as they arrive."""
+    client = get_genai_client()
+    if not client:
+        yield "Error: GEMINI_API_KEY not found in Streamlit Secrets."
+        return
+
     context_chunks = context_chunks or []
     history = history or []
 
-    api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return {
-            "answer": "Error: GEMINI_API_KEY was not found in Streamlit Secrets.",
-            "sources": [],
-            "error": "Missing GEMINI_API_KEY",
-        }
-
-    sources = []
     formatted_context_list = []
     for c in context_chunks:
-        src_name = str(c.get("source", "Unknown"))
-        chunk_num = str(c.get("chunk", 0))
         chunk_text = str(c.get("text", ""))
-
-        preview_text = chunk_text[:220].replace("\n", " ")
-        if len(chunk_text) > 220:
-            preview_text += "…"
-
-        sources.append({
-            "source": src_name,
-            "chunk": chunk_num,
-            "preview": preview_text,
-        })
-
         formatted_context_list.append(f"\n{chunk_text}")
 
     context = "\n\n".join(formatted_context_list)
@@ -118,47 +105,17 @@ def answer_question(
         types.Content(role="user", parts=[types.Part.from_text(text=user_content)])
     )
 
-    client = genai.Client(api_key=api_key)
-
-    # Retry loop with backoff for 503 capacity spikes
-    max_retries = 3
-    delay = 1.5
-
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=formatted_contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.2,
-                ),
-            )
-            answer = response.text.strip() if response.text else "No response generated."
-            return {
-                "answer": answer,
-                "sources": sources,
-                "error": None,
-            }
-        except APIError as exc:
-            if exc.code in (503, 429) and attempt < max_retries - 1:
-                time.sleep(delay)
-                delay *= 2
-                continue
-            return {
-                "answer": "Google's servers are experiencing temporary high demand. Please try asking again.",
-                "sources": sources,
-                "error": exc.message if hasattr(exc, "message") else str(exc),
-            }
-        except Exception as exc:
-            return {
-                "answer": "An unexpected error occurred while communicating with Gemini.",
-                "sources": sources,
-                "error": str(exc),
-            }
-
-    return {
-        "answer": "Server is temporarily busy. Please try asking again shortly.",
-        "sources": sources,
-        "error": "Max retries exceeded on 503.",
-    }
+    try:
+        response_stream = client.models.generate_content_stream(
+            model=model,
+            contents=formatted_contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2,
+            ),
+        )
+        for chunk in response_stream:
+            if chunk.text:
+                yield chunk.text
+    except Exception as exc:
+        yield f"\n\n*(Error generating response: {exc})*"
