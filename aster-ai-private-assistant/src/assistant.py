@@ -5,11 +5,14 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-# Current active production model
-DEFAULT_MODEL = "gemini-3.8-flash"
+# Active production models
 FALLBACK_MODELS = [
     "gemini-3.8-flash",
+    "gemini-3.8-pro",
+    "gemini-3.8-flash-lite",
 ]
+
+MODEL = FALLBACK_MODELS[0]
 
 
 def check_ollama(base_url=None):
