@@ -5,7 +5,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-DEFAULT_MODEL = "gemini-3.8-flash"
+DEFAULT_MODEL = "gemini-flash-latest"
 
 
 def check_ollama(base_url=None):
@@ -17,25 +17,33 @@ def check_ollama(base_url=None):
 
 @st.cache_data(ttl=3600)
 def list_models(base_url=None):
-    """Dynamically fetch valid generateContent models, fallback to default."""
+    """Dynamically fetch valid text generation models only."""
     api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return [DEFAULT_MODEL]
+        return ["gemini-flash-latest", "gemini-3.8-flash"]
 
     try:
         client = genai.Client(api_key=api_key)
         valid_models = []
+        # Filter out non-text, media-generation, and deprecated model tags
+        exclude_tags = ["tts", "image", "embedding", "audio", "realtime", "2.0", "2.5"]
+
         for m in client.models.list():
             methods = getattr(m, "supported_generation_methods", []) or getattr(m, "supported_actions", [])
             name = m.name.replace("models/", "") if hasattr(m, "name") else ""
-            if "generateContent" in methods and "flash" in name.lower():
+
+            if "generateContent" in methods and not any(tag in name.lower() for tag in exclude_tags):
                 valid_models.append(name)
-        if DEFAULT_MODEL in valid_models:
-            valid_models.remove(DEFAULT_MODEL)
-            valid_models.insert(0, DEFAULT_MODEL)
-        return valid_models if valid_models else [DEFAULT_MODEL]
+
+        # Ensure our most reliable production models sit at the top of the dropdown
+        for priority in ["gemini-flash-latest", "gemini-3.8-flash"]:
+            if priority in valid_models:
+                valid_models.remove(priority)
+                valid_models.insert(0, priority)
+
+        return valid_models if valid_models else ["gemini-flash-latest", "gemini-3.8-flash"]
     except Exception:
-        return [DEFAULT_MODEL]
+        return ["gemini-flash-latest", "gemini-3.8-flash"]
 
 
 def answer_question(
@@ -73,7 +81,7 @@ def answer_question(
             "preview": preview_text,
         })
 
-        formatted_context_list.append("\n" + chunk_text)
+        formatted_context_list.append(f"\n{chunk_text}")
 
     context = "\n\n".join(formatted_context_list)
 
@@ -112,7 +120,7 @@ def answer_question(
 
     client = genai.Client(api_key=api_key)
 
-    # Retry loop with backoff for occasional 503 high-demand spikes
+    # Retry loop with backoff for 503 capacity spikes
     max_retries = 3
     delay = 1.5
 
@@ -138,7 +146,7 @@ def answer_question(
                 delay *= 2
                 continue
             return {
-                "answer": "Google's servers are experiencing temporary high demand. Please try sending your prompt again.",
+                "answer": "Google's servers are experiencing temporary high demand. Please try asking again.",
                 "sources": sources,
                 "error": exc.message if hasattr(exc, "message") else str(exc),
             }
@@ -150,7 +158,7 @@ def answer_question(
             }
 
     return {
-        "answer": "Google's servers are currently busy. Please wait a moment and try again.",
+        "answer": "Server is temporarily busy. Please try asking again shortly.",
         "sources": sources,
         "error": "Max retries exceeded on 503.",
     }
