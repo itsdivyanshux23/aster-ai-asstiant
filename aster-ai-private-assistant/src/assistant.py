@@ -6,7 +6,6 @@ from google.genai.errors import APIError
 
 FALLBACK_MODELS = [
     "gemini-3.8-flash",
-    "gemini-2.5-flash",
     "gemini-2.0-flash",
 ]
 
@@ -59,9 +58,7 @@ def answer_question(
             "preview": preview_text,
         })
 
-        formatted_context_list.append(
-            "\n" + chunk_text
-        )
+        formatted_context_list.append("\n" + chunk_text)
 
     context = "\n\n".join(formatted_context_list)
 
@@ -100,6 +97,7 @@ def answer_question(
 
     client = genai.Client(api_key=api_key)
 
+    # Force valid models first
     models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
     last_error = None
 
@@ -121,7 +119,7 @@ def answer_question(
             }
         except APIError as exc:
             last_error = exc
-            # If 404 (deprecated/not found), 503 (high demand), or 429 (rate limit), try next model
+            # If 404 (deprecated), 503 (demand spike), or 429 (rate limit), try next model
             if exc.code in (404, 503, 429):
                 continue
             break
@@ -130,7 +128,7 @@ def answer_question(
             break
 
     return {
-        "answer": "Unable to generate a response. Please check your model access and try again.",
+        "answer": "Unable to reach Gemini right now. Please try again in a moment.",
         "sources": sources,
         "error": str(last_error),
     }
