@@ -97,4 +97,3 @@ if prompt:
 
     st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
     save_message("assistant", full_response)
-    
