@@ -110,7 +110,6 @@ def answer_question(
             }
         except APIError as exc:
             last_error = exc
-            # If 503 (high demand) or 429 (rate limit), try next model in loop
             if exc.code in (503, 429):
                 continue
             break
