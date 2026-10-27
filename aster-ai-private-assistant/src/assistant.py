@@ -4,7 +4,6 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-# Preferred models in order of fallback
 FALLBACK_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
