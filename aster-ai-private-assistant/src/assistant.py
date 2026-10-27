@@ -14,7 +14,6 @@ MODEL = FALLBACK_MODELS[0]
 
 
 def check_ollama(base_url=None):
-    """Compatibility stub so any legacy calls won't crash."""
     api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if api_key:
         return True, "Gemini API is configured."
@@ -43,19 +42,29 @@ def answer_question(
             "error": "Missing GEMINI_API_KEY",
         }
 
-    sources = [
-        {
-            "source": c["source"],
-            "chunk": c["chunk"],
-            "preview": c["text"][:220].replace("\n", " ") + ("…" if len(c["text"]) > 220 else ""),
-        }
-        for c in context_chunks
-    ]
+    sources = []
+    formatted_context_list = []
+    for c in context_chunks:
+        src_name = str(c.get("source", "Unknown"))
+        chunk_num = str(c.get("chunk", 0))
+        chunk_text = str(c.get("text", ""))
 
-    context = "\n\n".join(
-        f"}, section {c['chunk']}]\n{c['text']}"
-        for c in context_chunks
-    )
+        preview_text = chunk_text[:220].replace("\n", " ")
+        if len(chunk_text) > 220:
+            preview_text += "…"
+
+        sources.append({
+            "source": src_name,
+            "chunk": chunk_num,
+            "preview": preview_text,
+        })
+
+        # Built with string concatenation to eliminate f-string syntax errors completely
+        formatted_context_list.append(
+            "\n" + chunk_text
+        )
+
+    context = "\n\n".join(formatted_context_list)
 
     if context:
         system_instruction = (
@@ -65,29 +74,33 @@ def answer_question(
             "enough evidence, then optionally provide general knowledge separately. Do not invent citations. "
             "Be clear and beginner-friendly."
         )
-        user_content = f"DOCUMENT EXCERPTS:\n{context}\n\nQUESTION:\n{question}"
+        user_content = "DOCUMENT EXCERPTS:\n" + context + "\n\nQUESTION:\n" + str(question)
     else:
         system_instruction = (
             "You are Aster AI, a helpful study assistant. Be accurate, concise, and beginner-friendly. "
             "If unsure, say so."
         )
-        user_content = question
+        user_content = str(question)
 
-    # Prepare chat history for GenAI SDK
     formatted_contents = []
     for item in history[-6:]:
         role = item.get("role")
         content = item.get("content", "")
         if role == "user":
-            formatted_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=content[:3000])]))
+            formatted_contents.append(
+                types.Content(role="user", parts=[types.Part.from_text(text=content[:3000])])
+            )
         elif role == "assistant":
-            formatted_contents.append(types.Content(role="model", parts=[types.Part.from_text(text=content[:3000])]))
+            formatted_contents.append(
+                types.Content(role="model", parts=[types.Part.from_text(text=content[:3000])])
+            )
 
-    formatted_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+    formatted_contents.append(
+        types.Content(role="user", parts=[types.Part.from_text(text=user_content)])
+    )
 
     client = genai.Client(api_key=api_key)
 
-    # Try requested model first, then fall back if overloaded
     models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
     last_error = None
 
