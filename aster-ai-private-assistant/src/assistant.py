@@ -1,76 +1,112 @@
-import requests
 
-def check_ollama(base_url="http://localhost:11434"):
-    try:
-        response = requests.get(base_url.rstrip("/") + "/api/tags", timeout=3)
-        response.raise_for_status()
-        return True, "Ollama is running."
-    except requests.RequestException:
-        return False, "Cannot connect to Ollama. Install it, open Ollama, and try again."
+import streamlit as st
+from google import genai
+from google.genai import types
 
-def list_models(base_url="http://localhost:11434"):
-    try:
-        response = requests.get(base_url.rstrip("/") + "/api/tags", timeout=5)
-        response.raise_for_status()
-        return [m.get("name", "") for m in response.json().get("models", []) if m.get("name")]
-    except (requests.RequestException, ValueError):
-        return []
 
-def answer_question(question, context_chunks=None, history=None,
-                    base_url="http://localhost:11434", model="llama3.2:1b"):
+MODEL = "gemini-3.8-flash"
+
+
+def check_ollama(base_url=None):
+    # Kept so older code importing this function will not break.
+    if st.secrets.get("GEMINI_API_KEY"):
+        return True, "Gemini API is configured."
+    return False, "Add GEMINI_API_KEY in Streamlit Secrets."
+
+
+def list_models(base_url=None):
+    # Gemini model is configured directly in this file.
+    return [MODEL]
+
+
+def answer_question(
+    question,
+    context_chunks=None,
+    history=None,
+    base_url=None,
+    model=MODEL,
+):
     context_chunks = context_chunks or []
     history = history or []
+
+    sources = [
+        {
+            "source": c["source"],
+            "chunk": c["chunk"],
+            "preview": c["text"][:220].replace("\n", " ")
+            + ("…" if len(c["text"]) > 220 else ""),
+        }
+        for c in context_chunks
+    ]
+
     context = "\n\n".join(
         f"[Source: {c['source']}, section {c['chunk']}]\n{c['text']}"
         for c in context_chunks
     )
+
     if context:
         system = (
-            "You are Aster AI, a careful study assistant. Answer using the supplied document excerpts "
-            "when the question concerns the user's documents. Cite sources inline like [filename, section 2]. "
-            "If the excerpts do not contain the answer, clearly say the uploaded documents do not provide "
-            "enough evidence, then optionally give general knowledge separately. Do not invent citations. "
+            "You are Aster AI, a careful study assistant. "
+            "Use supplied document excerpts for document questions. "
+            "Cite evidence inline as [filename, section 2]. "
+            "Never invent citations. If the documents do not contain "
+            "the answer, say so clearly. Separate general knowledge "
+            "from information supported by documents. "
             "Be clear and beginner-friendly."
         )
-        user_content = f"DOCUMENT EXCERPTS:\n{context}\n\nQUESTION:\n{question}"
+        prompt = f"{system}\n\nDOCUMENT EXCERPTS:\n{context}\n\n"
     else:
-        system = (
-            "You are Aster AI, a helpful assistant running locally. Be accurate, concise, and beginner-friendly. "
-            "If unsure, say so."
+        prompt = (
+            "You are Aster AI, a helpful and accurate assistant. "
+            "Be concise and beginner-friendly. If unsure, say so.\n\n"
         )
-        user_content = question
-    messages = [{"role": "system", "content": system}]
+
     for item in history[-6:]:
-        if item.get("role") in ("user", "assistant") and item.get("content"):
-            messages.append({"role": item["role"], "content": item["content"][:3000]})
-    messages.append({"role": "user", "content": user_content})
+        role = item.get("role")
+        content = item.get("content", "")
+        if role in ("user", "assistant") and content:
+            prompt += f"{role.upper()}: {content[:3000]}\n\n"
+
+    prompt += f"USER: {question}"
+
     try:
-        response = requests.post(
-            base_url.rstrip("/") + "/api/chat",
-            json={"model": model, "messages": messages, "stream": False,
-                  "options": {"temperature": 0.2}},
-            timeout=180,
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
+        if not api_key:
+            return {
+                "answer": "Gemini API key is missing. Add GEMINI_API_KEY in your Streamlit app's Secrets settings.",
+                "sources": [],
+                "error": "Missing API key.",
+            }
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model or MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                system_instruction=(
+                    "You are Aster AI. Follow the instructions in the user's "
+                    "prompt, answer accurately, and never invent document citations."
+                ),
+            ),
         )
-        response.raise_for_status()
-        data = response.json()
-        answer = data.get("message", {}).get("content", "").strip()
+
+        answer = (response.text or "").strip()
         if not answer:
-            raise ValueError("Ollama returned an empty response.")
+            raise ValueError("Gemini returned an empty response.")
+
         return {
             "answer": answer,
-            "sources": [
-                {"source": c["source"], "chunk": c["chunk"],
-                 "preview": c["text"][:220].replace("\n", " ") + ("…" if len(c["text"]) > 220 else "")}
-                for c in context_chunks
-            ],
+            "sources": sources,
             "error": None,
         }
-    except requests.Timeout:
-        return {"answer": "The local model took too long to respond. Try a smaller model or a shorter question.",
-                "sources": [], "error": "Request timed out."}
-    except requests.ConnectionError:
-        return {"answer": "I cannot reach Ollama right now. Start Ollama and make sure the selected model is installed.",
-                "sources": [], "error": "Ollama connection failed."}
-    except (requests.RequestException, ValueError) as exc:
-        return {"answer": f"I couldn't get a valid response from Ollama. Check the model name and Ollama status.",
-                "sources": [], "error": str(exc)}
+
+    except Exception as exc:
+        return {
+            "answer": (
+                "I couldn't get a response from Gemini. Check your API key, "
+                "internet connection, model access, and API quota, then try again."
+            ),
+            "sources": [],
+            "error": str(exc),
+        }
