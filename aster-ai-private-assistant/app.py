@@ -9,14 +9,19 @@ init_db()
 st.title("✨ Aster AI")
 st.caption("Your personal study assistant powered by Gemini AI and document search.")
 
+AVAILABLE_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.8-pro",
+    "gemini-3.8-flash-lite",
+]
+
 with st.sidebar:
     st.header("Settings")
     st.subheader("AI Model")
 
-    available_models = list_models()
     selected_model = st.selectbox(
         "Chat model",
-        options=available_models,
+        options=AVAILABLE_MODELS,
         index=0,
     )
     st.success("Gemini API Connected")
