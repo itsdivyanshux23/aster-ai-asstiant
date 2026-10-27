@@ -12,13 +12,12 @@ st.caption("Your personal study assistant powered by Gemini AI and document sear
 with st.sidebar:
     st.header("Settings")
     st.subheader("AI Model")
-    
+
     available_models = list_models()
     selected_model = st.selectbox(
         "Chat model",
         options=available_models,
         index=0,
-        help="If a model hits temporary capacity spikes, Aster AI automatically tries the fallback models."
     )
     st.success("Gemini API Connected")
 
