@@ -5,7 +5,6 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-# Active production models
 FALLBACK_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.8-pro",
@@ -31,7 +30,7 @@ def answer_question(
     context_chunks=None,
     history=None,
     base_url=None,
-    model=DEFAULT_MODEL,
+    model=MODEL,
 ):
     context_chunks = context_chunks or []
     history = history or []
@@ -62,7 +61,7 @@ def answer_question(
         })
 
         formatted_context_list.append(
-            f"\n{chunk_text}"
+            "\n" + chunk_text
         )
 
     context = "\n\n".join(formatted_context_list)
@@ -102,7 +101,6 @@ def answer_question(
 
     client = genai.Client(api_key=api_key)
 
-    # Retry up to 3 times with a brief delay if Google servers hit a 503 demand spike
     max_retries = 3
     delay = 1.5
 
@@ -123,7 +121,6 @@ def answer_question(
                 "error": None,
             }
         except APIError as exc:
-            # Handle temporary Google capacity spikes (503) or rate limits (429)
             if exc.code in (503, 429) and attempt < max_retries - 1:
                 time.sleep(delay)
                 delay *= 2
