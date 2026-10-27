@@ -7,7 +7,7 @@ from google.genai.errors import APIError
 
 FALLBACK_MODELS = [
     "gemini-flash-latest",
-    "gemini-3.8-flash",
+    model = "gemini-3.5-flash-lite",
 ]
 
 DEFAULT_MODEL = FALLBACK_MODELS[0]
