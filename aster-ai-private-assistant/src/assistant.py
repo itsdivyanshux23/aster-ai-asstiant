@@ -1,14 +1,20 @@
 import os
+import time
 import streamlit as st
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
-DEFAULT_MODEL = "gemini-flash-latest"
+FALLBACK_MODELS = [
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+]
+
+DEFAULT_MODEL = FALLBACK_MODELS[0]
 
 
 @st.cache_resource
 def get_genai_client():
-    """Cache the client connection so we don't recreate it on every message."""
     api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
@@ -24,10 +30,9 @@ def check_ollama(base_url=None):
 
 @st.cache_data(ttl=3600)
 def list_models(base_url=None):
-    """Dynamically fetch valid text generation models only."""
     client = get_genai_client()
     if not client:
-        return ["gemini-flash-latest", "gemini-3.8-flash"]
+        return FALLBACK_MODELS
 
     try:
         valid_models = []
@@ -40,14 +45,14 @@ def list_models(base_url=None):
             if "generateContent" in methods and not any(tag in name.lower() for tag in exclude_tags):
                 valid_models.append(name)
 
-        for priority in ["gemini-flash-latest", "gemini-3.8-flash"]:
+        for priority in FALLBACK_MODELS:
             if priority in valid_models:
                 valid_models.remove(priority)
                 valid_models.insert(0, priority)
 
-        return valid_models if valid_models else ["gemini-flash-latest", "gemini-3.8-flash"]
+        return valid_models if valid_models else FALLBACK_MODELS
     except Exception:
-        return ["gemini-flash-latest", "gemini-3.8-flash"]
+        return FALLBACK_MODELS
 
 
 def stream_answer(
@@ -56,10 +61,9 @@ def stream_answer(
     history=None,
     model=DEFAULT_MODEL,
 ):
-    """Generator that yields text chunks in real time as they arrive."""
     client = get_genai_client()
     if not client:
-        yield "Error: GEMINI_API_KEY not found in Streamlit Secrets."
+        yield "Error: `GEMINI_API_KEY` was not found in Streamlit Secrets."
         return
 
     context_chunks = context_chunks or []
@@ -105,17 +109,40 @@ def stream_answer(
         types.Content(role="user", parts=[types.Part.from_text(text=user_content)])
     )
 
-    try:
-        response_stream = client.models.generate_content_stream(
-            model=model,
-            contents=formatted_contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
-            ),
-        )
-        for chunk in response_stream:
-            if chunk.text:
-                yield chunk.text
-    except Exception as exc:
-        yield f"\n\n*(Error generating response: {exc})*"
+    # Build fallback queue: requested model first, followed by remaining valid models
+    candidates = [model] + [m for m in FALLBACK_MODELS if m != model]
+    last_error = None
+
+    for target_model in candidates:
+        try:
+            response_stream = client.models.generate_content_stream(
+                model=target_model,
+                contents=formatted_contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.2,
+                ),
+            )
+            
+            # Verify stream validity before committing
+            has_yielded = False
+            for chunk in response_stream:
+                if chunk.text:
+                    has_yielded = True
+                    yield chunk.text
+
+            if has_yielded:
+                return
+
+        except APIError as exc:
+            last_error = exc
+            # If 503 (high demand) or 429 (rate limit), jump immediately to the fallback model
+            if exc.code in (503, 429):
+                time.sleep(1)
+                continue
+            break
+        except Exception as exc:
+            last_error = exc
+            break
+
+    yield f"The AI servers are currently experiencing high demand. Please try again in a few moments. *(Details: {last_error})*"
