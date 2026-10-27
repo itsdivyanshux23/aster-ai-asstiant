@@ -1,15 +1,15 @@
 import os
+import time
 import streamlit as st
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
+# Current active production model
+DEFAULT_MODEL = "gemini-3.8-flash"
 FALLBACK_MODELS = [
     "gemini-3.8-flash",
-    "gemini-2.0-flash",
 ]
-
-MODEL = FALLBACK_MODELS[0]
 
 
 def check_ollama(base_url=None):
@@ -28,7 +28,7 @@ def answer_question(
     context_chunks=None,
     history=None,
     base_url=None,
-    model=MODEL,
+    model=DEFAULT_MODEL,
 ):
     context_chunks = context_chunks or []
     history = history or []
@@ -58,7 +58,9 @@ def answer_question(
             "preview": preview_text,
         })
 
-        formatted_context_list.append("\n" + chunk_text)
+        formatted_context_list.append(
+            f"\n{chunk_text}"
+        )
 
     context = "\n\n".join(formatted_context_list)
 
@@ -97,14 +99,14 @@ def answer_question(
 
     client = genai.Client(api_key=api_key)
 
-    # Force valid models first
-    models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
-    last_error = None
+    # Retry up to 3 times with a brief delay if Google servers hit a 503 demand spike
+    max_retries = 3
+    delay = 1.5
 
-    for target_model in models_to_try:
+    for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model=target_model,
+                model=model,
                 contents=formatted_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
@@ -118,17 +120,25 @@ def answer_question(
                 "error": None,
             }
         except APIError as exc:
-            last_error = exc
-            # If 404 (deprecated), 503 (demand spike), or 429 (rate limit), try next model
-            if exc.code in (404, 503, 429):
+            # Handle temporary Google capacity spikes (503) or rate limits (429)
+            if exc.code in (503, 429) and attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
                 continue
-            break
+            return {
+                "answer": "Google's servers are currently busy with high demand. Please wait a few seconds and try again.",
+                "sources": sources,
+                "error": exc.message if hasattr(exc, "message") else str(exc),
+            }
         except Exception as exc:
-            last_error = exc
-            break
+            return {
+                "answer": "An unexpected error occurred while communicating with Gemini.",
+                "sources": sources,
+                "error": str(exc),
+            }
 
     return {
-        "answer": "Unable to reach Gemini right now. Please try again in a moment.",
+        "answer": "Server is temporarily busy. Please ask again shortly.",
         "sources": sources,
-        "error": str(last_error),
+        "error": "Max retries exceeded on 503.",
     }
