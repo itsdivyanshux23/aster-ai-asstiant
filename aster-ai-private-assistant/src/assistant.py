@@ -5,9 +5,9 @@ from google.genai import types
 from google.genai.errors import APIError
 
 FALLBACK_MODELS = [
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
 
 MODEL = FALLBACK_MODELS[0]
@@ -59,7 +59,6 @@ def answer_question(
             "preview": preview_text,
         })
 
-        # Built with string concatenation to eliminate f-string syntax errors completely
         formatted_context_list.append(
             "\n" + chunk_text
         )
@@ -122,7 +121,8 @@ def answer_question(
             }
         except APIError as exc:
             last_error = exc
-            if exc.code in (503, 429):
+            # If 404 (deprecated/not found), 503 (high demand), or 429 (rate limit), try next model
+            if exc.code in (404, 503, 429):
                 continue
             break
         except Exception as exc:
@@ -130,7 +130,7 @@ def answer_question(
             break
 
     return {
-        "answer": "Gemini models are currently experiencing high demand. Please try asking again in a few seconds.",
+        "answer": "Unable to generate a response. Please check your model access and try again.",
         "sources": sources,
         "error": str(last_error),
     }
